@@ -281,9 +281,15 @@ function updateAll() {
   pathFn = d3.geoPath().projection(projection);
   gratPath.attr('d', pathFn);
   countryGroup.selectAll('path').attr('d', pathFn);
-  // Move earthquake groups to their new projected positions
+
+  // projection([lon,lat]) does NOT respect clipAngle — must check hemisphere manually
+  const rot = projection.rotate();
+  const center = [-rot[0], -rot[1]]; // geographic point facing the viewer
+
   eqGroup.selectAll('g.eq').each(function(d) {
-    const coords = projection([d.geometry.coordinates[0], d.geometry.coordinates[1]]);
+    const [lon, lat] = d.geometry.coordinates;
+    const onFront = d3.geoDistance([lon, lat], center) < Math.PI / 2;
+    const coords = onFront ? projection([lon, lat]) : null;
     d3.select(this)
       .attr('transform', coords ? `translate(${coords[0]},${coords[1]})` : 'translate(-9999,-9999)')
       .style('visibility', coords ? 'visible' : 'hidden');
