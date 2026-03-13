@@ -258,8 +258,13 @@ const gratPath = svg.append('path')
   .attr('fill','none').attr('stroke','rgba(255,255,255,0.05)').attr('stroke-width',0.5)
   .attr('d', pathFn);
 
+// ClipPath — masks earthquake dots to the visible globe face
+const clipCircle = defs.append('clipPath').attr('id','globe-clip')
+  .append('circle').attr('cx',cx).attr('cy',cy).attr('r',R);
+
 const countryGroup = svg.append('g').attr('class','countries');
-const eqGroup = svg.append('g').attr('class','earthquakes');
+const eqGroup = svg.append('g').attr('class','earthquakes')
+  .attr('clip-path','url(#globe-clip)');
 
 // Load country outlines
 d3.json('https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson').then(world => {
@@ -305,6 +310,7 @@ svg.call(d3.zoom().scaleExtent([0.5, 8]).on('zoom', event => {
   projection.scale(nr);
   oceanCircle.attr('r', nr);
   glowRing.attr('r', nr);
+  clipCircle.attr('r', nr); // keep clip mask in sync with globe size
   updateAll();
 }));
 
