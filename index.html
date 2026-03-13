@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Earthquake Globe</title>
+  <meta name="description" content="Real-time earthquake data from the USGS displayed on an interactive globe. Updates every 60 seconds." />
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #020a14;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      color: #fff;
+    }
+    #app { width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+
+    #header {
+      text-align: center;
+      padding: 16px 20px 4px;
+      flex-shrink: 0;
+    }
+    #header h1 {
+      font-size: clamp(1.2rem, 3vw, 1.8rem);
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      background: linear-gradient(90deg, #f97316, #ef4444);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    #header p {
+      margin-top: 3px;
+      color: rgba(255,255,255,0.45);
+      font-size: 0.8rem;
+    }
+
+    #stats {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      padding: 6px 20px;
+      flex-shrink: 0;
+    }
+    .stat { text-align: center; }
+    .stat-value { font-size: clamp(0.95rem, 2.5vw, 1.4rem); font-weight: 700; }
+    .stat-label { font-size: 0.67rem; color: rgba(255,255,255,0.38); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 1px; }
+
+    #range-bar {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      padding: 4px 20px 2px;
+      flex-shrink: 0;
+    }
+    .range-btn {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.6);
+      border-radius: 20px;
+      padding: 4px 14px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .range-btn:hover { background: rgba(255,255,255,0.13); color: #fff; }
+    .range-btn.active {
+      background: rgba(249,115,22,0.25);
+      border-color: #f97316;
+      color: #fb923c;
+    }
+
+    #globe-container { flex: 1; min-height: 0; position: relative; }
+    #globe-container svg { display: block; }
+
+    #legend {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      padding: 6px 20px 12px;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .legend-label { font-size: 0.7rem; color: rgba(255,255,255,0.35); margin-right: 2px; }
+    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-dot { border-radius: 50%; flex-shrink: 0; }
+    .legend-text { font-size: 0.72rem; color: rgba(255,255,255,0.55); }
+
+    #tooltip {
+      position: fixed;
+      pointer-events: none;
+      background: rgba(2,10,20,0.96);
+      border: 1px solid rgba(249,115,22,0.3);
+      border-radius: 8px;
+      padding: 10px 14px;
+      min-width: 210px;
+      max-width: 300px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      display: none;
+      z-index: 100;
+    }
+    .t-mag {
+      font-size: 1.6rem;
+      font-weight: 800;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+    .t-place { font-size: 0.82rem; color: rgba(255,255,255,0.85); margin-bottom: 6px; line-height: 1.3; }
+    .t-row { font-size: 0.75rem; color: rgba(255,255,255,0.55); margin-bottom: 2px; }
+    .t-row strong { color: rgba(255,255,255,0.75); }
+
+    #status-bar {
+      position: fixed;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.7rem;
+      color: rgba(255,255,255,0.25);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 10;
+    }
+    #pulse {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #22c55e;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.7); }
+    }
+    #pulse.loading { background: #f97316; animation: none; opacity: 0.7; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <h1>🌋 Live Earthquake Globe</h1>
+    <p>Real-time data from the USGS Earthquake Hazards Program · updates every 60s</p>
+  </div>
+
+  <div id="stats">
+    <div class="stat"><div class="stat-value" style="color:#f97316" id="s-count">—</div><div class="stat-label">earthquakes</div></div>
+    <div class="stat"><div class="stat-value" style="color:#ef4444" id="s-max">—</div><div class="stat-label">largest mag</div></div>
+    <div class="stat"><div class="stat-value" style="color:#60a5fa" id="s-updated">—</div><div class="stat-label">last updated</div></div>
+  </div>
+
+  <div id="range-bar">
+    <button class="range-btn" data-range="hour">Past Hour</button>
+    <button class="range-btn active" data-range="day">Past 24h</button>
+    <button class="range-btn" data-range="week">Past 7 Days</button>
+  </div>
+
+  <div id="globe-container"></div>
+
+  <div id="legend">
+    <span class="legend-label">Magnitude:</span>
+    <div class="legend-item"><div class="legend-dot" style="width:6px;height:6px;background:#22d3ee"></div><span class="legend-text">&lt; 2</span></div>
+    <div class="legend-item"><div class="legend-dot" style="width:9px;height:9px;background:#a3e635"></div><span class="legend-text">2–3</span></div>
+    <div class="legend-item"><div class="legend-dot" style="width:12px;height:12px;background:#facc15"></div><span class="legend-text">3–4</span></div>
+    <div class="legend-item"><div class="legend-dot" style="width:16px;height:16px;background:#f97316"></div><span class="legend-text">4–5</span></div>
+    <div class="legend-item"><div class="legend-dot" style="width:20px;height:20px;background:#ef4444"></div><span class="legend-text">5–6</span></div>
+    <div class="legend-item"><div class="legend-dot" style="width:26px;height:26px;background:#dc2626"></div><span class="legend-text">6+</span></div>
+  </div>
+</div>
+
+<div id="tooltip">
+  <div class="t-mag" id="t-mag"></div>
+  <div class="t-place" id="t-place"></div>
+  <div class="t-row" id="t-depth"></div>
+  <div class="t-row" id="t-time"></div>
+  <div class="t-row" id="t-felt"></div>
+</div>
+
+<div id="status-bar">
+  <div id="pulse"></div>
+  <span id="status-text">Loading…</span>
+</div>
+
+<script>
+const FEEDS = {
+  hour: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson',
+  day:  'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson',
+  week: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_week.geojson',
+};
+
+let currentRange = 'day';
+let refreshTimer = null;
+let countdownVal = 60;
+let countdownInterval = null;
+
+function magColor(m) {
+  if (m < 2)  return '#22d3ee';
+  if (m < 3)  return '#a3e635';
+  if (m < 4)  return '#facc15';
+  if (m < 5)  return '#f97316';
+  if (m < 6)  return '#ef4444';
+  return '#dc2626';
+}
+
+function magRadius(m) {
+  if (m < 1)  return 2;
+  if (m < 2)  return 3;
+  if (m < 3)  return 4.5;
+  if (m < 4)  return 6;
+  if (m < 5)  return 9;
+  if (m < 6)  return 13;
+  return Math.min(3 + m * 4, 30);
+}
+
+function timeAgo(ms) {
+  const s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60)   return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  return `${Math.floor(s/86400)}d ago`;
+}
+
+// ── Globe setup ────────────────────────────────────────────────
+const container = document.getElementById('globe-container');
+const W = container.offsetWidth, H = container.offsetHeight;
+const cx = W/2, cy = H/2;
+const R = Math.min(W, H) * 0.43;
+
+const projection = d3.geoOrthographic()
+  .scale(R).translate([cx, cy]).rotate([-15, -25, 0]).clipAngle(90);
+
+let pathFn = d3.geoPath().projection(projection);
+
+const svg = d3.select(container).append('svg')
+  .attr('width', W).attr('height', H).style('cursor', 'grab');
+
+// Defs
+const defs = svg.append('defs');
+['eq-glow','eq-glow-big'].forEach((id, i) => {
+  const f = defs.append('filter').attr('id', id);
+  f.append('feGaussianBlur').attr('in','SourceGraphic').attr('stdDeviation', i ? 5 : 3).attr('result','blur');
+  const m = f.append('feMerge');
+  m.append('feMergeNode').attr('in','blur');
+  m.append('feMergeNode').attr('in','SourceGraphic');
+});
+const globeGlow = defs.append('filter').attr('id','globe-glow');
+globeGlow.append('feGaussianBlur').attr('stdDeviation','6').attr('result','blur');
+const gm = globeGlow.append('feMerge');
+gm.append('feMergeNode').attr('in','blur');
+gm.append('feMergeNode').attr('in','SourceGraphic');
+
+const oceanCircle = svg.append('circle').attr('cx',cx).attr('cy',cy).attr('r',R)
+  .attr('fill','#071428');
+svg.append('circle').attr('cx',cx).attr('cy',cy).attr('r',R)
+  .attr('fill','none').attr('stroke','rgba(96,165,250,0.2)').attr('stroke-width',2)
+  .style('filter','url(#globe-glow)');
+
+const gratPath = svg.append('path')
+  .datum(d3.geoGraticule()())
+  .attr('fill','none').attr('stroke','rgba(255,255,255,0.05)').attr('stroke-width',0.5)
+  .attr('d', pathFn);
+
+const countryGroup = svg.append('g').attr('class','countries');
+const eqGroup = svg.append('g').attr('class','earthquakes');
+
+// Load country outlines
+d3.json('https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson').then(world => {
+  countryGroup.selectAll('path')
+    .data(world.features)
+    .enter().append('path')
+    .attr('d', pathFn)
+    .attr('fill','#0d2137')
+    .attr('stroke','rgba(255,255,255,0.1)')
+    .attr('stroke-width', 0.3);
+});
+
+function updateAll() {
+  pathFn = d3.geoPath().projection(projection);
+  gratPath.attr('d', pathFn);
+  countryGroup.selectAll('path').attr('d', pathFn);
+  // Re-render earthquake dots
+  eqGroup.selectAll('circle').attr('cx', d => {
+    const coords = projection([d.geometry.coordinates[0], d.geometry.coordinates[1]]);
+    return coords ? coords[0] : -9999;
+  }).attr('cy', d => {
+    const coords = projection([d.geometry.coordinates[0], d.geometry.coordinates[1]]);
+    return coords ? coords[1] : -9999;
+  }).style('display', d => {
+    const coords = projection([d.geometry.coordinates[0], d.geometry.coordinates[1]]);
+    return coords ? null : 'none';
+  });
+}
+
+// Drag
+let dragging = false;
+svg.call(d3.drag()
+  .on('start', () => { dragging = true; svg.style('cursor','grabbing'); })
+  .on('drag', event => {
+    const r = projection.rotate();
+    const k = 75 / projection.scale();
+    projection.rotate([r[0] + event.dx*k, r[1] - event.dy*k]);
+    updateAll();
+  })
+  .on('end', () => { dragging = false; svg.style('cursor','grab'); })
+);
+
+// Zoom
+svg.call(d3.zoom().scaleExtent([0.5, 8]).on('zoom', event => {
+  const nr = R * event.transform.k;
+  projection.scale(nr);
+  oceanCircle.attr('r', nr);
+  svg.selectAll('circle').filter((_,i) => i===1).attr('r', nr);
+  updateAll();
+}));
+
+// Auto-rotate (stops on drag)
+d3.timer(() => {
+  if (!dragging) {
+    const r = projection.rotate();
+    projection.rotate([r[0] + 0.1, r[1]]);
+    updateAll();
+  }
+});
+
+// ── Tooltip ────────────────────────────────────────────────────
+const tip = document.getElementById('tooltip');
+function showTip(event, d) {
+  const p = d.properties;
+  const mag = p.mag != null ? p.mag.toFixed(1) : '?';
+  const depth = d.geometry.coordinates[2];
+  document.getElementById('t-mag').textContent = `M ${mag}`;
+  document.getElementById('t-mag').style.color = magColor(p.mag || 0);
+  document.getElementById('t-place').textContent = p.place || 'Unknown location';
+  document.getElementById('t-depth').innerHTML = `<strong>Depth:</strong> ${depth != null ? depth.toFixed(1) + ' km' : '—'}`;
+  document.getElementById('t-time').innerHTML = `<strong>Time:</strong> ${timeAgo(p.time)} (${new Date(p.time).toUTCString().replace(' GMT','Z').slice(0,-1)})`;
+  document.getElementById('t-felt').innerHTML = p.felt ? `<strong>Felt reports:</strong> ${p.felt}` : '';
+  moveTip(event);
+  tip.style.display = 'block';
+}
+function moveTip(event) {
+  const left = event.clientX + 16 + 260 > window.innerWidth ? event.clientX - 276 : event.clientX + 16;
+  tip.style.left = left + 'px';
+  tip.style.top = (event.clientY - 10) + 'px';
+}
+function hideTip() { tip.style.display = 'none'; }
+
+// ── Data loading ───────────────────────────────────────────────
+function renderEarthquakes(features) {
+  eqGroup.selectAll('*').remove();
+
+  // Sort so smaller quakes are on top (larger rendered first)
+  const sorted = [...features].sort((a,b) => (b.properties.mag||0) - (a.properties.mag||0));
+
+  sorted.forEach(d => {
+    const [lon, lat] = d.geometry.coordinates;
+    const coords = projection([lon, lat]);
+    const mag = d.properties.mag || 0;
+    const r = magRadius(mag);
+    const color = magColor(mag);
+
+    if (!coords) return;
+
+    const g = eqGroup.append('g');
+
+    // Outer glow ring for big quakes
+    if (mag >= 4.5) {
+      g.append('circle')
+        .attr('cx', coords[0]).attr('cy', coords[1])
+        .attr('r', r + 4)
+        .attr('fill', 'none')
+        .attr('stroke', color)
+        .attr('stroke-width', 1)
+        .attr('opacity', 0.3)
+        .style('filter', 'url(#eq-glow-big)');
+    }
+
+    g.append('circle')
+      .attr('cx', coords[0]).attr('cy', coords[1])
+      .attr('r', r)
+      .attr('fill', color)
+      .attr('opacity', mag >= 4 ? 0.9 : 0.7)
+      .attr('stroke', 'rgba(255,255,255,0.15)')
+      .attr('stroke-width', 0.5)
+      .style('filter', mag >= 4 ? 'url(#eq-glow-big)' : 'url(#eq-glow)')
+      .style('cursor', 'pointer')
+      .datum(d)
+      .on('mouseover', function(event, d) {
+        d3.select(this).attr('opacity', 1).attr('r', r * 1.2);
+        showTip(event, d);
+      })
+      .on('mousemove', moveTip)
+      .on('mouseout', function() {
+        d3.select(this).attr('opacity', mag >= 4 ? 0.9 : 0.7).attr('r', r);
+        hideTip();
+      });
+
+    // Pulse animation for very recent quakes (< 1 hour)
+    if (Date.now() - d.properties.time < 3600000 && mag >= 3) {
+      const pulse = g.append('circle')
+        .attr('cx', coords[0]).attr('cy', coords[1])
+        .attr('r', r)
+        .attr('fill', 'none')
+        .attr('stroke', color)
+        .attr('stroke-width', 2)
+        .attr('opacity', 0.8);
+
+      (function expand() {
+        pulse.attr('r', r).attr('opacity', 0.8)
+          .transition().duration(1500)
+          .attr('r', r + 12).attr('opacity', 0)
+          .on('end', expand);
+      })();
+    }
+  });
+
+  // Update stats
+  const count = features.length;
+  const maxMag = count ? Math.max(...features.map(f => f.properties.mag || 0)) : 0;
+  document.getElementById('s-count').textContent = count.toLocaleString();
+  document.getElementById('s-max').textContent = maxMag > 0 ? `M ${maxMag.toFixed(1)}` : '—';
+  document.getElementById('s-updated').textContent = new Date().toLocaleTimeString();
+}
+
+function fetchData() {
+  const pulse = document.getElementById('pulse');
+  const statusText = document.getElementById('status-text');
+  pulse.className = 'loading';
+  statusText.textContent = 'Fetching data…';
+
+  d3.json(FEEDS[currentRange]).then(data => {
+    renderEarthquakes(data.features);
+    pulse.className = '';
+    countdownVal = 60;
+    statusText.textContent = `Live · refreshes in ${countdownVal}s · ${data.features.length} events from USGS`;
+  }).catch(err => {
+    pulse.className = 'loading';
+    statusText.textContent = 'Failed to fetch — retrying…';
+    console.error(err);
+  });
+}
+
+function startCountdown() {
+  clearInterval(countdownInterval);
+  countdownInterval = setInterval(() => {
+    countdownVal--;
+    if (countdownVal <= 0) {
+      fetchData();
+    } else {
+      document.getElementById('status-text').textContent =
+        `Live · refreshes in ${countdownVal}s`;
+    }
+  }, 1000);
+}
+
+// Range buttons
+document.querySelectorAll('.range-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentRange = btn.dataset.range;
+    fetchData();
+  });
+});
+
+// Kick off
+fetchData();
+startCountdown();
+
+// Restart countdown after each fetch
+const origFetch = fetchData;
+</script>
+</body>
+</html>
