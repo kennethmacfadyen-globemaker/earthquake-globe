@@ -292,7 +292,7 @@ function updateAll() {
     const coords = onFront ? projection([lon, lat]) : null;
     d3.select(this)
       .attr('transform', coords ? `translate(${coords[0]},${coords[1]})` : 'translate(-9999,-9999)')
-      .style('visibility', coords ? 'visible' : 'hidden');
+      .attr('display', coords ? null : 'none');
   });
 }
 
@@ -358,9 +358,13 @@ function renderEarthquakes(features) {
   // Sort so smaller quakes are on top (larger rendered first)
   const sorted = [...features].sort((a,b) => (b.properties.mag||0) - (a.properties.mag||0));
 
+  const rot0 = projection.rotate();
+  const center0 = [-rot0[0], -rot0[1]];
+
   sorted.forEach(d => {
     const [lon, lat] = d.geometry.coordinates;
-    const coords = projection([lon, lat]);
+    const onFront = d3.geoDistance([lon, lat], center0) < Math.PI / 2;
+    const coords = onFront ? projection([lon, lat]) : null;
     const mag = d.properties.mag || 0;
     const r = magRadius(mag);
     const color = magColor(mag);
@@ -370,7 +374,7 @@ function renderEarthquakes(features) {
       .attr('class', 'eq')
       .datum(d)
       .attr('transform', coords ? `translate(${coords[0]},${coords[1]})` : 'translate(-9999,-9999)')
-      .style('visibility', coords ? 'visible' : 'hidden');
+      .attr('display', coords ? null : 'none');
 
     // Outer glow ring for big quakes — centered at 0,0
     if (mag >= 4.5) {
